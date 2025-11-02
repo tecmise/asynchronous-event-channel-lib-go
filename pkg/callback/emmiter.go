@@ -1,23 +1,135 @@
 package callback
 
 import (
+	"context"
 	"errors"
 	"github.com/sirupsen/logrus"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
 	"github.com/tecmise/connector-lib/pkg/ports/output/assync"
 	"gorm.io/gorm"
+	"reflect"
 )
 
-func EmitDeletion(db *gorm.DB) error {
-	return emit(db, "DELETE")
+type AnyChannel interface {
+	OnDelete(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
+	OnCreate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
+	OnUpdate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
 }
 
-func EmitInsertion(db *gorm.DB) error {
-	return emit(db, "INSERT")
+type channelAdapter[T any] struct {
+	ch            emitter.Channel[T]
+	reflectedType string
 }
 
-func EmitUpdate(db *gorm.DB) error {
-	return emit(db, "UPDATE")
+func WrapperChannel[T any](ch emitter.Channel[T]) AnyChannel {
+	return &channelAdapter[T]{
+		ch:            ch,
+		reflectedType: reflect.TypeOf(new(T)).Elem().String(),
+	}
+}
+
+func (a *channelAdapter[T]) toTypedEmitable(em emitter.Emitable[any]) (emitter.Emitable[T], error) {
+	if typed, ok := em.(emitter.Emitable[T]); ok {
+		return typed, nil
+	}
+	return nil, errors.New("emitable type mismatch")
+}
+
+func (a *channelAdapter[T]) OnDelete(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
+	typedEmit, err := a.toTypedEmitable(emit)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := req.(T)
+	if !ok {
+		return nil, errors.New("request type mismatch")
+	}
+	return a.ch.OnDelete(ctx, r, typedEmit)
+}
+
+func (a *channelAdapter[T]) OnCreate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
+	typedEmit, err := a.toTypedEmitable(emit)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := req.(T)
+	if !ok {
+		return nil, errors.New("request type mismatch")
+	}
+	return a.ch.OnCreate(ctx, r, typedEmit)
+}
+
+func (a *channelAdapter[T]) OnUpdate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
+	typedEmit, err := a.toTypedEmitable(emit)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := req.(T)
+	if !ok {
+		return nil, errors.New("request type mismatch")
+	}
+	return a.ch.OnUpdate(ctx, r, typedEmit)
+}
+
+func NewAsyncChannel() AsyncChannel {
+	return &asyncChannel{}
+}
+
+type AsyncChannel interface {
+	AddChannel(channel emitter.Channel[any]) AsyncChannel
+	RegistryEmit(db *gorm.DB) error
+}
+
+type asyncChannel struct {
+	channels map[reflect.Type]emitter.Channel[any]
+}
+
+func (a asyncChannel) RegistryEmit(db *gorm.DB) error {
+	errInsert := db.Callback().Create().After("gorm:create").Register("emit_create", func(db *gorm.DB) {
+		err := emit(db, "INSERT")
+		if err != nil {
+			logrus.Errorf("error on create database: %v", err)
+		}
+	})
+
+	if errInsert != nil {
+		logrus.Error("error to registry callback to insert")
+		return errInsert
+	}
+
+	errUpdate := db.Callback().Create().After("gorm:update").Register("emit_update", func(db *gorm.DB) {
+		err := emit(db, "UPDATE")
+		if err != nil {
+			logrus.Errorf("error on update database: %v", err)
+		}
+	})
+
+	if errUpdate != nil {
+		logrus.Error("error to registry callback to update")
+		return errUpdate
+	}
+
+	errDelete := db.Callback().Create().After("gorm:delete").Register("emit_delete", func(db *gorm.DB) {
+		err := emit(db, "DELETE")
+		if err != nil {
+			logrus.Errorf("error on delete database: %v", err)
+		}
+	})
+
+	if errDelete != nil {
+		logrus.Error("error to registry callback to delete")
+		return errInsert
+	}
+
+	return nil
+
+}
+
+func (a asyncChannel) AddChannel(channel emitter.Channel[any]) AsyncChannel {
+	logrus.Debug("adding channel")
+	key := reflect.TypeOf(new(any)).Elem()
+	a.channels[key] = channel
+	return a
 }
 
 func emit(db *gorm.DB, operation string) error {
