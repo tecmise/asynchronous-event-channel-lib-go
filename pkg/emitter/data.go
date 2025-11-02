@@ -1,12 +1,16 @@
 package emitter
 
 import (
-	"context"
-	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/response"
+	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
 )
 
-type EventData[T any] interface {
-	OnUpdate(ctx context.Context, req *T, subject string) (*response.Message, error)
-	OnCreate(ctx context.Context, req *T, subject string) (*response.Message, error)
-	OnDelete(ctx context.Context, req *T, subject string) (*response.Message, error)
+type Emitable[T any] interface {
+	GetFifoProperties() *shared_kernel.FifoProperties
+	Metadada() EmitableMetadata
+	Channel() Channel[T]
+}
+
+type EmitableMetadata struct {
+	Publisher string
+	Name      string
 }
