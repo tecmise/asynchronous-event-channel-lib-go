@@ -7,7 +7,6 @@ import (
 type Emitable[T any] interface {
 	GetFifoProperties() *shared_kernel.FifoProperties
 	Metadada() EmitableMetadata
-	Channel() Channel[T]
 }
 
 type EmitableMetadata struct {
