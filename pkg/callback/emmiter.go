@@ -6,86 +6,108 @@ import (
 	"fmt"
 	"github.com/sirupsen/logrus"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
+	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
 	"github.com/tecmise/connector-lib/pkg/ports/output/assync"
 	"gorm.io/gorm"
 	"reflect"
 	"strings"
 )
 
-type AnyChannel interface {
-	OnDelete(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
-	OnCreate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
-	OnUpdate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error)
+type AnyChannel[R any] interface {
+	OnUpdate(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
+	OnDelete(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
+	OnCreate(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
 }
 
-type channelAdapter[T any] struct {
-	Ch            emitter.Channel[T]
+type channelAdapter[E any, R any] struct {
+	Ch            emitter.Channel[E, R]
 	ReflectedType reflect.Type
 }
 
-func WrapperChannel[T any](ch emitter.Channel[T]) AnyChannel {
-	return &channelAdapter[T]{
+func WrapperChannel[E any, R any](ch emitter.Channel[E, R]) emitter.Channel[any, any] {
+	return &channelAdapter[E, R]{
 		Ch:            ch,
-		ReflectedType: reflect.TypeOf(new(T)).Elem(),
+		ReflectedType: reflect.TypeOf(new(E)).Elem(),
 	}
 }
 
-func (a *channelAdapter[T]) toTypedEmitable(em emitter.Emitable[any]) (emitter.Emitable[T], error) {
-	if typed, ok := em.(emitter.Emitable[T]); ok {
+func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
+	var zero R
+	// primeiro tenta assert direto
+	if typed, ok := req.(R); ok {
+		return typed, nil
+	}
+	// tenta se for ponteiro para R (ex: *customer.Request quando R é customer.Request)
+	rv := reflect.ValueOf(req)
+	if rv.IsValid() && rv.Kind() == reflect.Ptr && !rv.IsNil() {
+		elem := rv.Elem()
+		if elem.IsValid() && elem.CanInterface() {
+			if val, ok := elem.Interface().(R); ok {
+				return val, nil
+			}
+		}
+	}
+	// tenta caso R seja ponteiro e req seja valor
+	rv = reflect.ValueOf(req)
+	if rv.IsValid() && rv.Kind() != reflect.Ptr {
+		if reflect.TypeOf(zero).Kind() == reflect.Ptr {
+			// criar ponteiro para o valor recebido se tipos baterem por nome
+			if rv.Type().AssignableTo(reflect.TypeOf(zero).Elem()) {
+				ptr := reflect.New(rv.Type())
+				ptr.Elem().Set(rv)
+				if val, ok := ptr.Interface().(R); ok {
+					return val, nil
+				}
+			}
+		}
+	}
+	return zero, errors.New("request type mismatch in channel adapter")
+}
+
+func (a *channelAdapter[E, R]) toTypedEmitable(em emitter.Emitable[any]) (emitter.Emitable[E], error) {
+	if typed, ok := em.(emitter.Emitable[E]); ok {
 		return typed, nil
 	}
 	return nil, errors.New("emitable type mismatch")
 }
 
-func (a *channelAdapter[T]) OnDelete(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
-	typedEmit, err := a.toTypedEmitable(emit)
+func (a *channelAdapter[E, R]) OnUpdate(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
-	r, ok := req.(*T)
-	if !ok {
-		return nil, errors.New("request type mismatch")
-	}
-	return a.Ch.OnDelete(ctx, *r, typedEmit)
+	return a.Ch.OnUpdate(ctx, typedReq, metadata, properties)
 }
 
-func (a *channelAdapter[T]) OnCreate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
-	typedEmit, err := a.toTypedEmitable(emit)
+func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
-	r, ok := req.(*T)
-	if !ok {
-		return nil, errors.New("request type mismatch")
-	}
-	return a.Ch.OnCreate(ctx, *r, typedEmit)
+	return a.Ch.OnDelete(ctx, typedReq, metadata, properties)
 }
 
-func (a *channelAdapter[T]) OnUpdate(ctx context.Context, req any, emit emitter.Emitable[any]) (*assync.SnsTriggerResponse, error) {
-	typedEmit, err := a.toTypedEmitable(emit)
+func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
-	r, ok := req.(*T)
-	if !ok {
-		return nil, errors.New("request type mismatch")
-	}
-	return a.Ch.OnUpdate(ctx, *r, typedEmit)
+	return a.Ch.OnCreate(ctx, typedReq, metadata, properties)
 }
 
 func NewAsyncChannel() AsyncChannel {
 	return &asyncChannel{
-		channels: make(map[string]emitter.Channel[any]),
+		channels: make(map[string]emitter.Channel[any, any]),
 	}
 }
 
 type AsyncChannel interface {
-	AddChannels(channel ...emitter.Channel[any])
+	AddChannels(channel ...emitter.Channel[any, any])
 	RegistryEmit(db *gorm.DB) error
 }
 
 type asyncChannel struct {
-	channels map[string]emitter.Channel[any]
+	channels map[string]emitter.Channel[any, any]
 }
 
 func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
@@ -129,7 +151,7 @@ func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
 
 }
 
-func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any]) {
+func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any, any]) {
 
 	if channels == nil || len(channels) == 0 {
 		logrus.Error("no channels provided to add")
@@ -138,7 +160,7 @@ func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any]) {
 
 	for _, channel := range channels {
 		if a.channels == nil {
-			a.channels = make(map[string]emitter.Channel[any])
+			a.channels = make(map[string]emitter.Channel[any, any])
 		}
 
 		rv := reflect.ValueOf(channel)
@@ -176,46 +198,105 @@ func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any]) {
 
 func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 	obj := db.Statement.Dest
-	emitable, ok := obj.(emitter.Emitable[any])
-	if ok {
-		metadata := emitable.Metadada()
-		key := reflect.TypeOf(obj).String()
 
-		fields := map[string]interface{}{
-			"table":     db.Statement.Table,
-			"publisher": metadata.Publisher,
-			"name":      metadata.Name,
-			"key":       key,
-		}
-		logrus.WithFields(fields).Debug("Emitting entity")
+	key := reflect.TypeOf(obj).String()
 
-		channel, hasChannel := a.channels[key]
-
-		if !hasChannel {
-			logrus.WithFields(fields).Debug("No channel found for entity, skipping emit")
-			return nil
-		}
-
-		var err error
-		var result *assync.SnsTriggerResponse
-		if operation == "DELETE" {
-			logrus.WithFields(fields).Debug("Deleting entity")
-			result, err = channel.OnDelete(db.Statement.Context, obj, emitable)
-		} else if operation == "INSERT" {
-			logrus.WithFields(fields).Debug("Inserting entity")
-			result, err = channel.OnCreate(db.Statement.Context, obj, emitable)
-		} else if operation == "UPDATE" {
-			logrus.WithFields(fields).Debug("Updating entity")
-			result, err = channel.OnUpdate(db.Statement.Context, obj, emitable)
-		}
-		if err != nil {
-			logrus.Errorf("error emitting entity: %v", err)
-			return err
-		}
-		if result == nil {
-			return errors.New("error emitting entity: no result")
-		}
-		logrus.WithField("message_id", result.MessageId).Debug("emited entity")
+	rv := reflect.ValueOf(obj)
+	if !rv.IsValid() {
+		return nil
 	}
+
+	// chamada Metadada()
+	metaMethod := rv.MethodByName("Metadada")
+	if !metaMethod.IsValid() {
+		// não implementa Metadada(), pula
+		return nil
+	}
+	metaOut := metaMethod.Call(nil)
+	if len(metaOut) != 1 {
+		return nil
+	}
+	metadata, ok := metaOut[0].Interface().(emitter.EmitableMetadata)
+	if !ok {
+		return nil
+	}
+
+	// chamada GetAsyncEmitterData()
+	getMethod := rv.MethodByName("GetAsyncEmitterData")
+	if !getMethod.IsValid() {
+		return nil
+	}
+	out := getMethod.Call(nil)
+	if len(out) < 2 {
+		return nil
+	}
+
+	// segundo retorno é error
+	var err error
+	if !out[1].IsNil() {
+		if e, ok := out[1].Interface().(error); ok {
+			err = e
+		}
+	}
+	if err != nil {
+		logrus.Errorf("error getting async emitter data: %v", err)
+		return err
+	}
+
+	dto := out[0].Interface()
+	logrus.Infof("emitter data (via reflection): %v metadata: %+v", dto, metadata)
+
+	// chamada GetFifoProperties()
+	var fifo *shared_kernel.FifoProperties
+	fifoMethod := rv.MethodByName("GetFifoProperties")
+	if fifoMethod.IsValid() {
+		fifoOut := fifoMethod.Call(nil)
+		if len(fifoOut) == 1 && !fifoOut[0].IsNil() {
+			if f, ok := fifoOut[0].Interface().(*shared_kernel.FifoProperties); ok {
+				fifo = f
+			}
+		}
+	}
+	logrus.Debugf("fifo properties (via reflection): %+v", fifo)
+	fields := map[string]interface{}{
+		"table":     db.Statement.Table,
+		"publisher": metadata.Publisher,
+		"name":      metadata.Name,
+		"key":       key,
+	}
+	logrus.WithFields(fields).Debug("Emitting entity")
+
+	channel, hasChannel := a.channels[key]
+
+	if !hasChannel {
+		logrus.WithFields(fields).Debug("No channel found for entity, skipping emit")
+		return nil
+	}
+
+	var result *assync.SnsTriggerResponse
+
+	if err != nil {
+		logrus.Errorf("error getting async emitter data: %v", err)
+		return err
+	}
+
+	if operation == "DELETE" {
+		logrus.WithFields(fields).Debug("Deleting entity")
+		result, err = channel.OnDelete(db.Statement.Context, &dto, metadata, *fifo)
+	} else if operation == "INSERT" {
+		logrus.WithFields(fields).Debug("Inserting entity")
+		result, err = channel.OnCreate(db.Statement.Context, &dto, metadata, *fifo)
+	} else if operation == "UPDATE" {
+		logrus.WithFields(fields).Debug("Updating entity")
+		result, err = channel.OnUpdate(db.Statement.Context, &dto, metadata, *fifo)
+	}
+	if err != nil {
+		logrus.Errorf("error emitting entity: %v", err)
+		return err
+	}
+	if result == nil {
+		return errors.New("error emitting entity: no result")
+	}
+	logrus.WithField("message_id", result.MessageId).Debug("emited entity")
 	return nil
 }

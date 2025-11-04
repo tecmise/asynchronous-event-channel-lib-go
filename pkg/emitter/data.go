@@ -7,6 +7,7 @@ import (
 type Emitable[T any] interface {
 	GetFifoProperties() *shared_kernel.FifoProperties
 	Metadada() EmitableMetadata
+	GetAsyncEmitterData() (*T, error)
 }
 
 type EmitableMetadata struct {
