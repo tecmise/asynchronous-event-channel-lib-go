@@ -28,14 +28,22 @@ type publisherData[R any] struct {
 	serviceName string
 }
 
+func (p publisherData[R]) asValidatable(r R) (request.Validatable, bool) {
+	// tentativa direta
+	if v, ok := any(r).(request.Validatable); ok {
+		return v, true
+	}
+	// tentativa com endereço do valor (resolve casos onde Validate está em *T)
+	if v, ok := any(&r).(request.Validatable); ok {
+		return v, true
+	}
+	return nil, false
+}
+
 func (p publisherData[R]) OnUpdate(ctx context.Context, r R, metadata EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
-	v := any(r)
-	req, ok := v.(request.Validatable)
+	req, ok := p.asValidatable(r)
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
-	}
-	if err := request.ValidateObject(req); err != nil {
-		return nil, err
 	}
 	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnUpdate %s", metadata.Name), &properties, map[string]string{
 		"service":   p.serviceName,
@@ -44,13 +52,9 @@ func (p publisherData[R]) OnUpdate(ctx context.Context, r R, metadata EmitableMe
 }
 
 func (p publisherData[R]) OnCreate(ctx context.Context, r R, metadata EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
-	v := any(r)
-	req, ok := v.(request.Validatable)
+	req, ok := p.asValidatable(r)
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
-	}
-	if err := request.ValidateObject(req); err != nil {
-		return nil, err
 	}
 	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnCreate %s", metadata.Name), &properties, map[string]string{
 		"service":   p.serviceName,
@@ -59,13 +63,9 @@ func (p publisherData[R]) OnCreate(ctx context.Context, r R, metadata EmitableMe
 }
 
 func (p publisherData[R]) OnDelete(ctx context.Context, r R, metadata EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
-	v := any(r)
-	req, ok := v.(request.Validatable)
+	req, ok := p.asValidatable(r)
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
-	}
-	if err := request.ValidateObject(req); err != nil {
-		return nil, err
 	}
 	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnDelete %s", metadata.Name), &properties, map[string]string{
 		"service":   p.serviceName,

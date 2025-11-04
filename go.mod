@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.2
-	github.com/tecmise/connector-lib v1.3.6
+	github.com/tecmise/connector-lib v1.4.3
 )
 
 require (

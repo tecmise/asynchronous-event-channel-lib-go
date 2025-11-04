@@ -8,6 +8,7 @@ import (
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
 	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
 	"github.com/tecmise/connector-lib/pkg/ports/output/assync"
+	"github.com/tecmise/connector-lib/pkg/ports/output/request"
 	"gorm.io/gorm"
 	"reflect"
 	"strings"
@@ -20,28 +21,74 @@ type AnyChannel[R any] interface {
 }
 
 type channelAdapter[E any, R any] struct {
-	Ch                 emitter.Channel[R]
-	EntityReflectType  reflect.Type
-	RequestReflectType reflect.Type
+	Ch                     emitter.Channel[R]
+	EntityReflectType      reflect.Type
+	RequestReflectType     reflect.Type
+	Validations            []request.CustomValidator
+	RImplementsValidatable bool
 }
 
 func WrapperChannel[E any, R any](ch emitter.Channel[R]) emitter.Channel[any] {
 	e := reflect.TypeOf(new(E)).Elem()
 	r := reflect.TypeOf(new(R)).Elem()
+	validType := reflect.TypeOf((*request.Validatable)(nil)).Elem()
+	hasValid := r.Implements(validType) || reflect.PtrTo(r).Implements(validType)
+
 	return &channelAdapter[E, R]{
-		Ch:                 ch,
-		EntityReflectType:  e,
-		RequestReflectType: r,
+		Ch:                     ch,
+		EntityReflectType:      e,
+		RequestReflectType:     r,
+		Validations:            nil,
+		RImplementsValidatable: hasValid,
 	}
+}
+
+func WrapperChannelWithValidations[E any, R any](ch emitter.Channel[R], validations ...request.CustomValidator) emitter.Channel[any] {
+	adapter := WrapperChannel[E, R](ch).(*channelAdapter[E, R])
+	adapter.Validations = validations
+	return adapter
+}
+
+func (a *channelAdapter[E, R]) getValidatable(typedReq R) (request.Validatable, bool) {
+	if v, ok := any(typedReq).(request.Validatable); ok {
+		return v, true
+	}
+
+	rv := reflect.ValueOf(typedReq)
+	if !rv.IsValid() {
+		return nil, false
+	}
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil, false
+		}
+		if v, ok := rv.Interface().(request.Validatable); ok {
+			return v, true
+		}
+		return nil, false
+	}
+
+	ptr := reflect.New(rv.Type())
+	ptr.Elem().Set(rv)
+	if v, ok := ptr.Interface().(request.Validatable); ok {
+		return v, true
+	}
+
+	if rv.CanAddr() {
+		addr := rv.Addr()
+		if v, ok := addr.Interface().(request.Validatable); ok {
+			return v, true
+		}
+	}
+
+	return nil, false
 }
 
 func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
 	var zero R
-	// primeiro tenta assert direto
 	if typed, ok := req.(R); ok {
 		return typed, nil
 	}
-	// tenta se for ponteiro para R (ex: *customer.Request quando R é customer.Request)
 	rv := reflect.ValueOf(req)
 	if rv.IsValid() && rv.Kind() == reflect.Ptr && !rv.IsNil() {
 		elem := rv.Elem()
@@ -51,11 +98,9 @@ func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
 			}
 		}
 	}
-	// tenta caso R seja ponteiro e req seja valor
 	rv = reflect.ValueOf(req)
 	if rv.IsValid() && rv.Kind() != reflect.Ptr {
 		if reflect.TypeOf(zero).Kind() == reflect.Ptr {
-			// criar ponteiro para o valor recebido se tipos baterem por nome
 			if rv.Type().AssignableTo(reflect.TypeOf(zero).Elem()) {
 				ptr := reflect.New(rv.Type())
 				ptr.Elem().Set(rv)
@@ -80,6 +125,21 @@ func (a *channelAdapter[E, R]) OnUpdate(ctx context.Context, req any, metadata e
 	if err != nil {
 		return nil, err
 	}
+
+	vr, ok := a.getValidatable(typedReq)
+
+	if ok {
+		if a.RImplementsValidatable && len(a.Validations) > 0 {
+			if err := request.ValidateObject(vr, a.Validations...); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := request.ValidateObject(vr); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return a.Ch.OnUpdate(ctx, typedReq, metadata, properties)
 }
 
@@ -88,6 +148,21 @@ func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata e
 	if err != nil {
 		return nil, err
 	}
+
+	vr, ok := a.getValidatable(typedReq)
+
+	if ok {
+		if a.RImplementsValidatable && len(a.Validations) > 0 {
+			if err := request.ValidateObject(vr, a.Validations...); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := request.ValidateObject(vr); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return a.Ch.OnDelete(ctx, typedReq, metadata, properties)
 }
 
@@ -96,6 +171,21 @@ func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata e
 	if err != nil {
 		return nil, err
 	}
+
+	vr, ok := a.getValidatable(typedReq)
+
+	if ok {
+		if a.RImplementsValidatable && len(a.Validations) > 0 {
+			if err := request.ValidateObject(vr, a.Validations...); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := request.ValidateObject(vr); err != nil {
+				return nil, err
+			}
+		}
+	}
+
 	return a.Ch.OnCreate(ctx, typedReq, metadata, properties)
 }
 
