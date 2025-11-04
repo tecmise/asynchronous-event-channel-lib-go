@@ -336,7 +336,7 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 	}
 
 	dto := out[0].Interface()
-	logrus.Infof("emitter data (via reflection): %v metadata: %+v", dto, metadata)
+	logrus.WithField("metadata", metadata).WithField("dto", dto).WithField("key", key).Debug("got async emitter data")
 
 	// chamada GetFifoProperties()
 	var fifo *shared_kernel.FifoProperties
