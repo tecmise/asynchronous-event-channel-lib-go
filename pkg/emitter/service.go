@@ -29,11 +29,9 @@ type publisherData[R any] struct {
 }
 
 func (p publisherData[R]) asValidatable(r R) (request.Validatable, bool) {
-	// tentativa direta
 	if v, ok := any(r).(request.Validatable); ok {
 		return v, true
 	}
-	// tentativa com endereço do valor (resolve casos onde Validate está em *T)
 	if v, ok := any(&r).(request.Validatable); ok {
 		return v, true
 	}
@@ -45,10 +43,10 @@ func (p publisherData[R]) OnUpdate(ctx context.Context, r R, metadata EmitableMe
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
 	}
-	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnUpdate %s", metadata.Name), &properties, map[string]string{
-		"service":   p.serviceName,
-		"operation": "update",
-	})
+	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
+		Data:      req,
+		Operation: OperationUpdate,
+	}, metadata.Publisher, fmt.Sprintf("OnUpdate %s", metadata.Name), &properties, nil)
 }
 
 func (p publisherData[R]) OnCreate(ctx context.Context, r R, metadata EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
@@ -56,10 +54,10 @@ func (p publisherData[R]) OnCreate(ctx context.Context, r R, metadata EmitableMe
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
 	}
-	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnCreate %s", metadata.Name), &properties, map[string]string{
-		"service":   p.serviceName,
-		"operation": "insert",
-	})
+	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
+		Data:      req,
+		Operation: OperationCreate,
+	}, metadata.Publisher, fmt.Sprintf("OnCreate %s", metadata.Name), &properties, nil)
 }
 
 func (p publisherData[R]) OnDelete(ctx context.Context, r R, metadata EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
@@ -67,8 +65,8 @@ func (p publisherData[R]) OnDelete(ctx context.Context, r R, metadata EmitableMe
 	if !ok {
 		return nil, fmt.Errorf("request does not implement request.Validatable (type %T)", r)
 	}
-	return p.publisher.Publish(ctx, req, metadata.Publisher, fmt.Sprintf("OnDelete %s", metadata.Name), &properties, map[string]string{
-		"service":   p.serviceName,
-		"operation": "delete",
-	})
+	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
+		Data:      req,
+		Operation: OperationDelete,
+	}, metadata.Publisher, fmt.Sprintf("OnDelete %s", metadata.Name), &properties, nil)
 }

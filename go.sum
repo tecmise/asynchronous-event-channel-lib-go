@@ -39,6 +39,8 @@ github.com/tecmise/connector-lib v1.4.2 h1:R9Vi7Xgt4Otu1OZX0qriwJXOW3nmWTtWZj5UU
 github.com/tecmise/connector-lib v1.4.2/go.mod h1:4wQ1bq1i76BKJMNd31jZtsUrH4k5kayU7rlV4YnOVVM=
 github.com/tecmise/connector-lib v1.4.3 h1:PY5lFIQuzOilLhf8CsovuACI5JJkd7B6+FQCQdI2ig4=
 github.com/tecmise/connector-lib v1.4.3/go.mod h1:4wQ1bq1i76BKJMNd31jZtsUrH4k5kayU7rlV4YnOVVM=
+github.com/tecmise/connector-lib v1.4.5 h1:oU6Dsf8hbrRJc89HP9WWhSR2gO9mGuwpRa82F/45sf4=
+github.com/tecmise/connector-lib v1.4.5/go.mod h1:4wQ1bq1i76BKJMNd31jZtsUrH4k5kayU7rlV4YnOVVM=
 golang.org/x/crypto v0.41.0 h1:WKYxWedPGCTVVl5+WHSSrOBT0O8lx32+zxmHxijgXp4=
 golang.org/x/crypto v0.41.0/go.mod h1:pO5AFd7FA68rFak7rOAGVuygIISepHftHnr8dr6+sUc=
 golang.org/x/net v0.43.0 h1:lat02VYK2j4aLzMzecihNvTlJNQUq316m2Mr9rnM6YE=
