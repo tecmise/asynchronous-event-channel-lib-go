@@ -3,7 +3,6 @@ package emitter
 import (
 	"fmt"
 	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
-	"github.com/tecmise/connector-lib/pkg/ports/output/request"
 )
 
 type Emitable[T any] interface {
@@ -17,7 +16,7 @@ type EmitableMetadata struct {
 	Name      string
 }
 
-type DTOEmitted[T request.Validatable] struct {
+type DTOEmitted[T any] struct {
 	Data      T         `validate:"required"`
 	Operation Operation `validate:"required"`
 }
