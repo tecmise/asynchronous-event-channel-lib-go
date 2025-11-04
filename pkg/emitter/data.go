@@ -39,11 +39,14 @@ func (o Operation) IsValid() bool {
 	}
 }
 
-// ParseOperation converte string para Operation ou retorna erro.
 func ParseOperation(s string) (Operation, error) {
 	op := Operation(s)
 	if !op.IsValid() {
 		return "", fmt.Errorf("operação inválida: %s", s)
 	}
 	return op, nil
+}
+
+func (o Operation) String() string {
+	return string(o)
 }
