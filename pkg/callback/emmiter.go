@@ -20,14 +20,18 @@ type AnyChannel[R any] interface {
 }
 
 type channelAdapter[E any, R any] struct {
-	Ch            emitter.Channel[E, R]
-	ReflectedType reflect.Type
+	Ch                 emitter.Channel[R]
+	EntityReflectType  reflect.Type
+	RequestReflectType reflect.Type
 }
 
-func WrapperChannel[E any, R any](ch emitter.Channel[E, R]) emitter.Channel[any, any] {
+func WrapperChannel[E any, R any](ch emitter.Channel[R]) emitter.Channel[any] {
+	e := reflect.TypeOf(new(E)).Elem()
+	r := reflect.TypeOf(new(R)).Elem()
 	return &channelAdapter[E, R]{
-		Ch:            ch,
-		ReflectedType: reflect.TypeOf(new(E)).Elem(),
+		Ch:                 ch,
+		EntityReflectType:  e,
+		RequestReflectType: r,
 	}
 }
 
@@ -97,17 +101,16 @@ func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata e
 
 func NewAsyncChannel() AsyncChannel {
 	return &asyncChannel{
-		channels: make(map[string]emitter.Channel[any, any]),
+		channels: make(map[string]emitter.Channel[any]),
 	}
 }
 
 type AsyncChannel interface {
-	AddChannels(channel ...emitter.Channel[any, any])
+	AddChannels(channel ...emitter.Channel[any])
 	RegistryEmit(db *gorm.DB) error
 }
-
 type asyncChannel struct {
-	channels map[string]emitter.Channel[any, any]
+	channels map[string]emitter.Channel[any]
 }
 
 func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
@@ -150,8 +153,7 @@ func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
 	return nil
 
 }
-
-func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any, any]) {
+func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any]) {
 
 	if channels == nil || len(channels) == 0 {
 		logrus.Error("no channels provided to add")
@@ -160,7 +162,7 @@ func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any, any]) {
 
 	for _, channel := range channels {
 		if a.channels == nil {
-			a.channels = make(map[string]emitter.Channel[any, any])
+			a.channels = make(map[string]emitter.Channel[any])
 		}
 
 		rv := reflect.ValueOf(channel)
@@ -173,7 +175,7 @@ func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any, any]) {
 			return
 		}
 
-		field := rv.FieldByName("ReflectedType")
+		field := rv.FieldByName("EntityReflectType")
 		if !field.IsValid() {
 			logrus.Error("field ReflectedType not found on channel")
 			return
@@ -181,7 +183,7 @@ func (a *asyncChannel) AddChannels(channels ...emitter.Channel[any, any]) {
 
 		typ, ok := field.Interface().(reflect.Type)
 		if !ok {
-			logrus.Error("ReflectedType has unexpected type")
+			logrus.Error("EntityReflectType has unexpected type")
 			return
 		}
 
@@ -280,15 +282,21 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 		return err
 	}
 
+	// trate fifo nil e passe dto diretamente (channel espera any)
+	props := shared_kernel.FifoProperties{}
+	if fifo != nil {
+		props = *fifo
+	}
+
 	if operation == "DELETE" {
 		logrus.WithFields(fields).Debug("Deleting entity")
-		result, err = channel.OnDelete(db.Statement.Context, &dto, metadata, *fifo)
+		result, err = channel.OnDelete(db.Statement.Context, dto, metadata, props)
 	} else if operation == "INSERT" {
 		logrus.WithFields(fields).Debug("Inserting entity")
-		result, err = channel.OnCreate(db.Statement.Context, &dto, metadata, *fifo)
+		result, err = channel.OnCreate(db.Statement.Context, dto, metadata, props)
 	} else if operation == "UPDATE" {
 		logrus.WithFields(fields).Debug("Updating entity")
-		result, err = channel.OnUpdate(db.Statement.Context, &dto, metadata, *fifo)
+		result, err = channel.OnUpdate(db.Statement.Context, dto, metadata, props)
 	}
 	if err != nil {
 		logrus.Errorf("error emitting entity: %v", err)
