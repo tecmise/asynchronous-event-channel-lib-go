@@ -17,9 +17,9 @@ type SQSMessageAttribute struct {
 }
 
 type SnsMessage struct {
-	MessageId              string `json:"messageId"`
-	ReceiptHandle          string `json:"receiptHandle"`
-	Body                   `json:"body"`
+	MessageId              string                       `json:"messageId"`
+	ReceiptHandle          string                       `json:"receiptHandle"`
+	Body                   string                       `json:"body"`
 	Md5OfBody              string                       `json:"md5OfBody"`
 	Md5OfMessageAttributes string                       `json:"md5OfMessageAttributes"`
 	Attributes             Attributes                   `json:"attributes"`
