@@ -35,7 +35,7 @@ type Body struct {
 	SequenceNumber    string                       `json:"SequenceNumber"`
 	TopicArn          string                       `json:"TopicArn"`
 	Subject           string                       `json:"Subject"`
-	Message           Message                      `json:"Message"`
+	Message           string                       `json:"Message"`
 	Timestamp         time.Time                    `json:"Timestamp"`
 	UnsubscribeURL    string                       `json:"UnsubscribeURL"`
 	MessageAttributes map[string]MessageAttributes `json:"MessageAttributes"`
@@ -54,9 +54,4 @@ type Attributes struct {
 	SenderId                         string `json:"SenderId"`
 	SentTimestamp                    string `json:"SentTimestamp"`
 	SequenceNumber                   string `json:"SequenceNumber"`
-}
-
-type Message struct {
-	Data      string `validate:"required"`
-	Operation string `validate:"required"`
 }
