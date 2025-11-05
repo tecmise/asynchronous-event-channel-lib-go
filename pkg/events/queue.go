@@ -4,7 +4,7 @@ import (
 	"time"
 )
 
-type SQSEvent struct {
+type SnsEvent struct {
 	Records []SnsMessage `json:"Records"`
 }
 
