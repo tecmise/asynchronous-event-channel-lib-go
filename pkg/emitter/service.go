@@ -45,7 +45,7 @@ func (p publisherData[R]) OnUpdate(ctx context.Context, r R, metadata EmitableMe
 	}
 	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
 		Data:      req,
-		Operation: OperationUpdate,
+		Operation: "UPDATE",
 	}, metadata.Publisher, fmt.Sprintf("OnUpdate %s", metadata.Name), &properties, nil)
 }
 
@@ -56,7 +56,7 @@ func (p publisherData[R]) OnCreate(ctx context.Context, r R, metadata EmitableMe
 	}
 	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
 		Data:      req,
-		Operation: OperationCreate,
+		Operation: "INSERT",
 	}, metadata.Publisher, fmt.Sprintf("OnCreate %s", metadata.Name), &properties, nil)
 }
 
@@ -67,6 +67,6 @@ func (p publisherData[R]) OnDelete(ctx context.Context, r R, metadata EmitableMe
 	}
 	return p.publisher.Publish(ctx, DTOEmitted[request.Validatable]{
 		Data:      req,
-		Operation: OperationDelete,
+		Operation: "DELETE",
 	}, metadata.Publisher, fmt.Sprintf("OnDelete %s", metadata.Name), &properties, nil)
 }
