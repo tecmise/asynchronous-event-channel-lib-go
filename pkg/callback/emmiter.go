@@ -5,52 +5,54 @@ import (
 	"errors"
 	"fmt"
 	"github.com/sirupsen/logrus"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/definition"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
-	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
-	"github.com/tecmise/connector-lib/pkg/ports/output/assync"
-	"github.com/tecmise/connector-lib/pkg/ports/output/request"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/publisher"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/validation"
 	"gorm.io/gorm"
 	"reflect"
 	"strings"
 )
 
 type AnyChannel[R any] interface {
-	OnUpdate(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
-	OnDelete(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
-	OnCreate(ctx context.Context, req R, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error)
+	OnUpdate(ctx context.Context, req R, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error)
+	OnDelete(ctx context.Context, req R, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error)
+	OnCreate(ctx context.Context, req R, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error)
+}
+
+type adapter[R any] struct {
+	Ch        emitter.Channel[R]
+	Validator func(R) error
 }
 
 type channelAdapter[E any, R any] struct {
-	Ch                     emitter.Channel[R]
-	EntityReflectType      reflect.Type
-	RequestReflectType     reflect.Type
-	Validations            []request.CustomValidator
-	RImplementsValidatable bool
+	adapter            adapter[R]
+	EntityReflectType  reflect.Type
+	RequestReflectType reflect.Type
 }
 
 func WrapperChannel[E any, R any](ch emitter.Channel[R]) emitter.Channel[any] {
 	e := reflect.TypeOf(new(E)).Elem()
 	r := reflect.TypeOf(new(R)).Elem()
-	validType := reflect.TypeOf((*request.Validatable)(nil)).Elem()
-	hasValid := r.Implements(validType) || reflect.PtrTo(r).Implements(validType)
-
 	return &channelAdapter[E, R]{
-		Ch:                     ch,
-		EntityReflectType:      e,
-		RequestReflectType:     r,
-		Validations:            nil,
-		RImplementsValidatable: hasValid,
+		adapter: adapter[R]{
+			Ch:        ch,
+			Validator: nil,
+		},
+		EntityReflectType:  e,
+		RequestReflectType: r,
 	}
 }
 
-func WrapperChannelWithValidations[E any, R any](ch emitter.Channel[R], validations ...request.CustomValidator) emitter.Channel[any] {
-	adapter := WrapperChannel[E, R](ch).(*channelAdapter[E, R])
-	adapter.Validations = validations
-	return adapter
+func WrapperChannelWithValidation[E any, R any](ch emitter.Channel[R], validation func(R) error) emitter.Channel[any] {
+	adp := WrapperChannel[E, R](ch).(*channelAdapter[E, R])
+	adp.adapter.Validator = validation
+	return adp
 }
 
-func (a *channelAdapter[E, R]) getValidatable(typedReq R) (request.Validatable, bool) {
-	if v, ok := any(typedReq).(request.Validatable); ok {
+func (a *channelAdapter[E, R]) getValidatable(typedReq R) (validation.Validatable, bool) {
+	if v, ok := any(typedReq).(validation.Validatable); ok {
 		return v, true
 	}
 
@@ -62,7 +64,7 @@ func (a *channelAdapter[E, R]) getValidatable(typedReq R) (request.Validatable, 
 		if rv.IsNil() {
 			return nil, false
 		}
-		if v, ok := rv.Interface().(request.Validatable); ok {
+		if v, ok := rv.Interface().(validation.Validatable); ok {
 			return v, true
 		}
 		return nil, false
@@ -70,13 +72,13 @@ func (a *channelAdapter[E, R]) getValidatable(typedReq R) (request.Validatable, 
 
 	ptr := reflect.New(rv.Type())
 	ptr.Elem().Set(rv)
-	if v, ok := ptr.Interface().(request.Validatable); ok {
+	if v, ok := ptr.Interface().(validation.Validatable); ok {
 		return v, true
 	}
 
 	if rv.CanAddr() {
 		addr := rv.Addr()
-		if v, ok := addr.Interface().(request.Validatable); ok {
+		if v, ok := addr.Interface().(validation.Validatable); ok {
 			return v, true
 		}
 	}
@@ -113,80 +115,61 @@ func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
 	return zero, errors.New("request type mismatch in channel adapter")
 }
 
-func (a *channelAdapter[E, R]) toTypedEmitable(em emitter.Emitable[any]) (emitter.Emitable[E], error) {
-	if typed, ok := em.(emitter.Emitable[E]); ok {
+func (a *channelAdapter[E, R]) toTypedEmitable(em definition.Emitable[any]) (definition.Emitable[E], error) {
+	if typed, ok := em.(definition.Emitable[E]); ok {
 		return typed, nil
 	}
 	return nil, errors.New("emitable type mismatch")
 }
 
-func (a *channelAdapter[E, R]) OnUpdate(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+func (a *channelAdapter[E, R]) OnUpdate(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
 	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
 
-	vr, ok := a.getValidatable(typedReq)
-
-	if ok {
-		if a.RImplementsValidatable && len(a.Validations) > 0 {
-			if err := request.ValidateObject(vr, a.Validations...); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := request.ValidateObject(vr); err != nil {
-				return nil, err
-			}
+	if a.adapter.Validator != nil {
+		val := a.adapter.Validator(typedReq)
+		if val != nil {
+			logrus.Errorf("validation error on OnUpdate: %v", val)
+			return nil, val
 		}
 	}
 
-	return a.Ch.OnUpdate(ctx, typedReq, metadata, properties)
+	return a.adapter.Ch.OnUpdate(ctx, typedReq, metadata, properties)
 }
 
-func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
 	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
 
-	vr, ok := a.getValidatable(typedReq)
-
-	if ok {
-		if a.RImplementsValidatable && len(a.Validations) > 0 {
-			if err := request.ValidateObject(vr, a.Validations...); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := request.ValidateObject(vr); err != nil {
-				return nil, err
-			}
+	if a.adapter.Validator != nil {
+		val := a.adapter.Validator(typedReq)
+		if val != nil {
+			logrus.Errorf("validation error on OnDelete: %v", val)
+			return nil, val
 		}
 	}
 
-	return a.Ch.OnDelete(ctx, typedReq, metadata, properties)
+	return a.adapter.Ch.OnDelete(ctx, typedReq, metadata, properties)
 }
 
-func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata emitter.EmitableMetadata, properties shared_kernel.FifoProperties) (*assync.SnsTriggerResponse, error) {
+func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
 	typedReq, err := a.convertReq(req)
 	if err != nil {
 		return nil, err
 	}
-
-	vr, ok := a.getValidatable(typedReq)
-
-	if ok {
-		if a.RImplementsValidatable && len(a.Validations) > 0 {
-			if err := request.ValidateObject(vr, a.Validations...); err != nil {
-				return nil, err
-			}
-		} else {
-			if err := request.ValidateObject(vr); err != nil {
-				return nil, err
-			}
+	if a.adapter.Validator != nil {
+		val := a.adapter.Validator(typedReq)
+		if val != nil {
+			logrus.Errorf("validation error on OnCreate: %v", val)
+			return nil, val
 		}
 	}
 
-	return a.Ch.OnCreate(ctx, typedReq, metadata, properties)
+	return a.adapter.Ch.OnCreate(ctx, typedReq, metadata, properties)
 }
 
 func NewAsyncChannel() AsyncChannel {
@@ -308,7 +291,7 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 	if len(metaOut) != 1 {
 		return nil
 	}
-	metadata, ok := metaOut[0].Interface().(emitter.EmitableMetadata)
+	metadata, ok := metaOut[0].Interface().(definition.EmitableMetadata)
 	if !ok {
 		return nil
 	}
@@ -339,12 +322,12 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 	logrus.WithField("metadata", metadata).WithField("dto", dto).WithField("key", key).Debug("got async emitter data")
 
 	// chamada GetFifoProperties()
-	var fifo *shared_kernel.FifoProperties
+	var fifo *properties.FifoProperties
 	fifoMethod := rv.MethodByName("GetFifoProperties")
 	if fifoMethod.IsValid() {
 		fifoOut := fifoMethod.Call(nil)
 		if len(fifoOut) == 1 && !fifoOut[0].IsNil() {
-			if f, ok := fifoOut[0].Interface().(*shared_kernel.FifoProperties); ok {
+			if f, ok := fifoOut[0].Interface().(*properties.FifoProperties); ok {
 				fifo = f
 			}
 		}
@@ -365,7 +348,7 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 		return nil
 	}
 
-	var result *assync.SnsTriggerResponse
+	var result *publisher.SnsTriggerResponse
 
 	if err != nil {
 		logrus.Errorf("error getting async emitter data: %v", err)
@@ -373,7 +356,7 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 	}
 
 	// trate fifo nil e passe dto diretamente (channel espera any)
-	props := shared_kernel.FifoProperties{}
+	props := properties.FifoProperties{}
 	if fifo != nil {
 		props = *fifo
 	}

@@ -1,11 +1,9 @@
-package emitter
+package definition
 
-import (
-	"github.com/tecmise/connector-lib/pkg/adapters/outbound/shared_kernel"
-)
+import "github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
 
 type Emitable[T any] interface {
-	GetFifoProperties() *shared_kernel.FifoProperties
+	GetFifoProperties() *properties.FifoProperties
 	Metadada() EmitableMetadata
 	GetAsyncEmitterData() (*T, error)
 }
