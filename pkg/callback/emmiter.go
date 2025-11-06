@@ -9,7 +9,6 @@ import (
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/publisher"
-	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/validation"
 	"gorm.io/gorm"
 	"reflect"
 	"strings"
@@ -49,41 +48,6 @@ func WrapperChannelWithValidation[E any, R any](ch emitter.Channel[R], validatio
 	adp := WrapperChannel[E, R](ch).(*channelAdapter[E, R])
 	adp.adapter.Validator = validation
 	return adp
-}
-
-func (a *channelAdapter[E, R]) getValidatable(typedReq R) (validation.Validatable, bool) {
-	if v, ok := any(typedReq).(validation.Validatable); ok {
-		return v, true
-	}
-
-	rv := reflect.ValueOf(typedReq)
-	if !rv.IsValid() {
-		return nil, false
-	}
-	if rv.Kind() == reflect.Ptr {
-		if rv.IsNil() {
-			return nil, false
-		}
-		if v, ok := rv.Interface().(validation.Validatable); ok {
-			return v, true
-		}
-		return nil, false
-	}
-
-	ptr := reflect.New(rv.Type())
-	ptr.Elem().Set(rv)
-	if v, ok := ptr.Interface().(validation.Validatable); ok {
-		return v, true
-	}
-
-	if rv.CanAddr() {
-		addr := rv.Addr()
-		if v, ok := addr.Interface().(validation.Validatable); ok {
-			return v, true
-		}
-	}
-
-	return nil, false
 }
 
 func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
