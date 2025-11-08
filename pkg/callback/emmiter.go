@@ -154,7 +154,7 @@ func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
 	errInsert := db.Callback().Create().After("gorm:create").Register("emit_create", func(db *gorm.DB) {
 		err := a.emit(db, "INSERT")
 		if err != nil {
-			logrus.Errorf("error on create database: %v", err)
+			logrus.WithError(err).Error("error on insert database")
 		}
 	})
 
@@ -166,7 +166,7 @@ func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
 	errUpdate := db.Callback().Create().After("gorm:update").Register("emit_update", func(db *gorm.DB) {
 		err := a.emit(db, "UPDATE")
 		if err != nil {
-			logrus.Errorf("error on update database: %v", err)
+			logrus.WithError(err).Error("error on update database")
 		}
 	})
 
@@ -178,7 +178,7 @@ func (a *asyncChannel) RegistryEmit(db *gorm.DB) error {
 	errDelete := db.Callback().Create().After("gorm:delete").Register("emit_delete", func(db *gorm.DB) {
 		err := a.emit(db, "DELETE")
 		if err != nil {
-			logrus.Errorf("error on delete database: %v", err)
+			logrus.WithError(err).Error("error on delete database")
 		}
 	})
 
