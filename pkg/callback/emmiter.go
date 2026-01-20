@@ -22,13 +22,14 @@ type AnyChannel[R any] interface {
 	OnCreate(ctx context.Context, req R, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error)
 }
 
-type adapter[R any] struct {
+type adapter[E any, R any] struct {
 	Ch        emitter.Channel[R]
 	Validator func(R) error
+	Converter func(E) R
 }
 
 type channelAdapter[E any, R any] struct {
-	adapter            adapter[R]
+	adapter            adapter[E, R]
 	EntityReflectType  reflect.Type
 	RequestReflectType reflect.Type
 }
@@ -37,48 +38,21 @@ func WrapperChannel[E any, R any](ch emitter.Channel[R]) emitter.Channel[any] {
 	e := reflect.TypeOf(new(E)).Elem()
 	r := reflect.TypeOf(new(R)).Elem()
 	return &channelAdapter[E, R]{
-		adapter: adapter[R]{
+		adapter: adapter[E, R]{
 			Ch:        ch,
 			Validator: nil,
+			Converter: nil,
 		},
 		EntityReflectType:  e,
 		RequestReflectType: r,
 	}
 }
 
-func WrapperChannelWithValidation[E any, R any](ch emitter.Channel[R], validation func(R) error) emitter.Channel[any] {
+func WrapperChannelWithMapper[E any, R any](ch emitter.Channel[R], structMapper definition.StructMapper[E, R]) emitter.Channel[any] {
 	adp := WrapperChannel[E, R](ch).(*channelAdapter[E, R])
-	adp.adapter.Validator = validation
+	adp.adapter.Validator = structMapper.Validate
+	adp.adapter.Converter = structMapper.ToProto
 	return adp
-}
-
-func (a *channelAdapter[E, R]) convertReq(req any) (R, error) {
-	var zero R
-	if typed, ok := req.(R); ok {
-		return typed, nil
-	}
-	rv := reflect.ValueOf(req)
-	if rv.IsValid() && rv.Kind() == reflect.Ptr && !rv.IsNil() {
-		elem := rv.Elem()
-		if elem.IsValid() && elem.CanInterface() {
-			if val, ok := elem.Interface().(R); ok {
-				return val, nil
-			}
-		}
-	}
-	rv = reflect.ValueOf(req)
-	if rv.IsValid() && rv.Kind() != reflect.Ptr {
-		if reflect.TypeOf(zero).Kind() == reflect.Ptr {
-			if rv.Type().AssignableTo(reflect.TypeOf(zero).Elem()) {
-				ptr := reflect.New(rv.Type())
-				ptr.Elem().Set(rv)
-				if val, ok := ptr.Interface().(R); ok {
-					return val, nil
-				}
-			}
-		}
-	}
-	return zero, errors.New("request type mismatch in channel adapter")
 }
 
 func (a *channelAdapter[E, R]) toTypedEmitable(em definition.Emitable[any]) (definition.Emitable[E], error) {
@@ -89,44 +63,11 @@ func (a *channelAdapter[E, R]) toTypedEmitable(em definition.Emitable[any]) (def
 }
 
 func (a *channelAdapter[E, R]) OnUpdate(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
-	typedReq, err := a.convertReq(req)
-	if err != nil {
-		return nil, err
+	e, ok := req.(E)
+	if !ok {
+		return nil, errors.New("request type mismatch in channel adapter")
 	}
-
-	if a.adapter.Validator != nil {
-		val := a.adapter.Validator(typedReq)
-		if val != nil {
-			logrus.Errorf("validation error on OnUpdate: %v", val)
-			return nil, val
-		}
-	}
-
-	return a.adapter.Ch.OnUpdate(ctx, typedReq, metadata, properties)
-}
-
-func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
-	typedReq, err := a.convertReq(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if a.adapter.Validator != nil {
-		val := a.adapter.Validator(typedReq)
-		if val != nil {
-			logrus.Errorf("validation error on OnDelete: %v", val)
-			return nil, val
-		}
-	}
-
-	return a.adapter.Ch.OnDelete(ctx, typedReq, metadata, properties)
-}
-
-func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
-	typedReq, err := a.convertReq(req)
-	if err != nil {
-		return nil, err
-	}
+	typedReq := a.adapter.Converter(e)
 	if a.adapter.Validator != nil {
 		val := a.adapter.Validator(typedReq)
 		if val != nil {
@@ -134,7 +75,38 @@ func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata d
 			return nil, val
 		}
 	}
+	return a.adapter.Ch.OnUpdate(ctx, typedReq, metadata, properties)
+}
 
+func (a *channelAdapter[E, R]) OnDelete(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
+	e, ok := req.(E)
+	if !ok {
+		return nil, errors.New("request type mismatch in channel adapter")
+	}
+	typedReq := a.adapter.Converter(e)
+	if a.adapter.Validator != nil {
+		val := a.adapter.Validator(typedReq)
+		if val != nil {
+			logrus.Errorf("validation error on OnCreate: %v", val)
+			return nil, val
+		}
+	}
+	return a.adapter.Ch.OnDelete(ctx, typedReq, metadata, properties)
+}
+
+func (a *channelAdapter[E, R]) OnCreate(ctx context.Context, req any, metadata definition.EmitableMetadata, properties properties.FifoProperties) (*publisher.SnsTriggerResponse, error) {
+	e, ok := req.(E)
+	if !ok {
+		return nil, errors.New("request type mismatch in channel adapter")
+	}
+	typedReq := a.adapter.Converter(e)
+	if a.adapter.Validator != nil {
+		val := a.adapter.Validator(typedReq)
+		if val != nil {
+			logrus.Errorf("validation error on OnCreate: %v", val)
+			return nil, val
+		}
+	}
 	return a.adapter.Ch.OnCreate(ctx, typedReq, metadata, properties)
 }
 
