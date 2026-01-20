@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/sns"
-	"github.com/sirupsen/logrus"
-	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/definition"
-	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
 	"os"
 	"strings"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sns"
+	"github.com/aws/aws-sdk-go-v2/service/sns/types"
+	"github.com/sirupsen/logrus"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/definition"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/keys"
+	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
 )
 
 type (
@@ -57,10 +60,23 @@ func (a emitterEntityEvent) Publish(ctx context.Context, req definition.DTOEmitt
 		return nil, fmt.Errorf("queue URL is FIFO but no fifo data provided")
 	}
 
+	authenticatedUser := ctx.Value(keys.AuthenticatedUser)
+
+	if authenticatedUser == nil || authenticatedUser.(string) == "" {
+		logrus.Error("authenticated user not found in context")
+		return nil, fmt.Errorf("authenticated user not found in context")
+	}
+
 	input := &sns.PublishInput{
 		TopicArn: aws.String(topicArn),
 		Subject:  aws.String(subject),
-		Message:  aws.String(string(content)),
+		MessageAttributes: map[string]types.MessageAttributeValue{
+			keys.AuthenticatedUser: {
+				DataType:    aws.String("String"),
+				StringValue: aws.String(authenticatedUser.(string)),
+			},
+		},
+		Message: aws.String(string(content)),
 	}
 
 	if isFifo {
