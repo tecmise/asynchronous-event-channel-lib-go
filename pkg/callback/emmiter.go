@@ -10,7 +10,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/definition"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/emitter"
-	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/keys"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/properties"
 	"github.com/tecmise/asynchronous-event-channel-lib-go/pkg/publisher"
 	"gorm.io/gorm"
@@ -299,17 +298,15 @@ func (a *asyncChannel) emit(db *gorm.DB, operation string) error {
 		props = *fifo
 	}
 
-	contextBuilded := context.WithValue(db.Statement.Context, keys.AuthenticatedUser, "teste-user")
-
 	if operation == "DELETE" {
 		logrus.WithFields(fields).Debug("Deleting entity")
-		result, err = channel.OnDelete(contextBuilded, dto, metadata, props)
+		result, err = channel.OnDelete(db.Statement.Context, dto, metadata, props)
 	} else if operation == "INSERT" {
 		logrus.WithFields(fields).Debug("Inserting entity")
-		result, err = channel.OnCreate(contextBuilded, dto, metadata, props)
+		result, err = channel.OnCreate(db.Statement.Context, dto, metadata, props)
 	} else if operation == "UPDATE" {
 		logrus.WithFields(fields).Debug("Updating entity")
-		result, err = channel.OnUpdate(contextBuilded, dto, metadata, props)
+		result, err = channel.OnUpdate(db.Statement.Context, dto, metadata, props)
 	}
 	if err != nil {
 		logrus.Errorf("error emitting entity: %v", err)
