@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -34,21 +33,15 @@ func NewPublisher(client *sns.Client, identifier string) EmitterEntityEvent {
 	}
 }
 
-func (a emitterEntityEvent) Publish(ctx context.Context, req definition.DTOEmitted[any], topicKeyVariable, subject string, fifoData *properties.FifoProperties) (*SnsTriggerResponse, error) {
+func (a emitterEntityEvent) Publish(ctx context.Context, req definition.DTOEmitted[any], topicArn, subject string, fifoData *properties.FifoProperties) (*SnsTriggerResponse, error) {
 	content, err := json.Marshal(req)
 	if err != nil {
 		logrus.Error("error marshaling request:", err)
 		return nil, err
 	}
 
-	if topicKeyVariable == "" {
-		return nil, fmt.Errorf("topic ARN cannot be empty")
-	}
-
-	topicArn := os.Getenv(topicKeyVariable)
-
 	if topicArn == "" {
-		return nil, fmt.Errorf("environment variable %s for topic ARN is not set or empty", topicKeyVariable)
+		return nil, fmt.Errorf("topic ARN cannot be empty verify into Metadada()")
 	}
 
 	isFifo := strings.HasSuffix(topicArn, ".fifo")
