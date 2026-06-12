@@ -72,6 +72,15 @@ func (a emitterEntityEvent) Publish(ctx context.Context, req definition.DTOEmitt
 		Message: aws.String(string(content)),
 	}
 
+	// IP do usuário é opcional (não vem em fluxos sem requisição HTTP, ex: jobs/system).
+	// Quando presente no contexto, propaga como atributo pro consumer auditar a origem.
+	if ip, ok := ctx.Value(keys.UserIP).(string); ok && ip != "" {
+		input.MessageAttributes[keys.UserIP] = types.MessageAttributeValue{
+			DataType:    aws.String("String"),
+			StringValue: aws.String(ip),
+		}
+	}
+
 	if isFifo {
 		input.MessageGroupId = aws.String(fifoData.MessageGroupId)
 		if fifoData.MessageDeduplicationId != "" {
